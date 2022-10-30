@@ -24,7 +24,7 @@ def num_confs(num:str):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('ckpt', type=str, help='path for loading the checkpoint')
+    parser.add_argument('--ckpt', type=str, default='logs/qm9_default_2022_10_27__09_59_58/checkpoints/40000.pt', help='path for loading the checkpoint')
     parser.add_argument('--save_traj', action='store_true', default=False,
                     help='whether store the whole trajectory for sampling')
     parser.add_argument('--resume', type=str, default=None)

@@ -777,6 +777,10 @@ def get_test_set_with_large_num_conf(base_path, dataset_name, block, tot_mol_siz
 class ConformationDataset(Dataset):
 
     def __init__(self, path, transform=None):
+        '''
+        Args:
+        transform: Transformer object add the number of nodes in a graph
+        '''
         super().__init__()
         with open(path, 'rb') as f:
             self.data = pickle.load(f)
@@ -785,10 +789,17 @@ class ConformationDataset(Dataset):
         self.edge_types = self._edge_types()
 
     def __getitem__(self, idx):
-
+        '''
+        Return:
+            Data(edge_index=[2, 46], pos=[23, 3], atom_type=[23], edge_type=[46], 
+            rdmol=<rdkit.Chem.rdchem.Mol object at 0x000001F5FAC22390>, 
+            smiles='CC[C@@H](O)[C@@H](C)[C@H]1CO1', totalenergy=[1], boltzmannweight=[1], 
+            idx=[1], num_nodes_per_graph=[1])
+        '''
         data = self.data[idx].clone()
         if self.transform is not None:
-            data = self.transform(data)        
+            data = self.transform(data)
+               
         return data
 
     def __len__(self):
@@ -872,7 +883,6 @@ class SidechainConformationDataset(ConformationDataset):
 
     @staticmethod
     def collate_fn(data):
-
         batch = [_ for _ in data if _ is not None]
         return Batch.from_data_list(batch)        
 

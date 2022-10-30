@@ -13,7 +13,7 @@ from ..encoder import SchNetEncoder, GINEncoder, get_edge_encoder
 from ..geometry import get_distance, get_angle, get_dihedral, eq_transform
 # from diffusion import get_timestep_embedding, get_beta_schedule
 import pdb
-
+from visualize_mat import *
 
 def get_beta_schedule(beta_schedule, *, beta_start, beta_end, num_diffusion_timesteps):
     def sigmoid(x):
@@ -58,8 +58,8 @@ class DualEncoderEpsNetwork(nn.Module):
         edge_encoder:  Takes both edge type and edge length as input and outputs a vector
         [Note]: node embedding is done in SchNetEncoder
         """
-        self.edge_encoder_global = get_edge_encoder(config)
-        self.edge_encoder_local = get_edge_encoder(config)
+        self.edge_encoder_global = get_edge_encoder(config) # MLPEdgeEncoder
+        self.edge_encoder_local = get_edge_encoder(config) # MLPEdgeEncoder
         # self.hidden_dim = config.hidden_dim
         '''
         timestep embedding
@@ -122,10 +122,10 @@ class DualEncoderEpsNetwork(nn.Module):
                 beta_end=config.beta_end,
                 num_diffusion_timesteps=config.num_diffusion_timesteps,
             )
-            betas = torch.from_numpy(betas).float()
+            betas = torch.from_numpy(betas).float() # Shape: [5000]
             self.betas = nn.Parameter(betas, requires_grad=False)
             ## variances
-            alphas = (1. - betas).cumprod(dim=0)
+            alphas = (1. - betas).cumprod(dim=0) # Shape: [5000]
             self.alphas = nn.Parameter(alphas, requires_grad=False)
             self.num_timesteps = self.betas.size(0)
         elif self.model_type == 'dsm':
@@ -163,7 +163,7 @@ class DualEncoderEpsNetwork(nn.Module):
             )
             edge_length = get_distance(pos, edge_index).unsqueeze(-1)   # (E, 1)
         local_edge_mask = is_local_edge(edge_type)  # (E, )
-
+        
         # Emb time_step
         if self.model_type == 'dsm':
             noise_levels = self.sigmas.index_select(0, time_step)  # (G, )
@@ -184,8 +184,8 @@ class DualEncoderEpsNetwork(nn.Module):
             sigma_edge = torch.ones(size=(edge_index.size(1), 1), device=pos.device)  # (E, 1)
 
         # Encoding global
-        edge_attr_global = self.edge_encoder_global(
-            edge_length=edge_length,
+        edge_attr_global = self.edge_encoder_global( # Shape: [27332, 128]
+            edge_length=edge_length, # Shape: [27332, 1]
             edge_type=edge_type
         )   # Embed edges
         # edge_attr += temb_edge
@@ -230,7 +230,7 @@ class DualEncoderEpsNetwork(nn.Module):
             edge_inv_local = self.grad_local_dist_mlp(h_pair_local) * (1.0 / sigma_edge[local_edge_mask]) # (E_local, 1)
         else:
             edge_inv_local = self.grad_local_dist_mlp(h_pair_local) * (1.0 / sigma_edge) # (E_local, 1)
-
+        
         if return_edges:
             return edge_inv_global, edge_inv_local, edge_index, edge_type, edge_length, local_edge_mask
         else:
@@ -249,11 +249,42 @@ class DualEncoderEpsNetwork(nn.Module):
 
     def get_loss_diffusion(self, atom_type, pos, bond_index, bond_type, batch, num_nodes_per_graph, num_graphs, 
                  anneal_power=2.0, return_unreduced_loss=False, return_unreduced_edge_loss=False, extend_order=True, extend_radius=True, is_sidechain=None):
+        '''
+        Args:
+            atom_type: Shape [1424]
+                tensor([6, 1, 1,  ..., 1, 1, 1])
+            pos: Shape [1424, 3]
+                tensor([[-2.6003, -0.6901, -0.8035],
+                        [-3.1245,  0.2260, -1.0711],
+                        [-1.9973, -1.0072, -1.6497],
+                        ...,
+                        [-3.5457, -1.3309,  0.6996],
+                        [-2.1187, -2.0834, -0.0225],
+                        [-3.5580, -1.8120, -1.0036]])
+            bond_index: Shape [2, 2748]
+                tensor([[   0,    0,    0,  ..., 1421, 1422, 1423],
+                        [   1,    2,    3,  ..., 1399, 1399, 1399]])
+            bond_type: Shape [2748]
+                tensor([1, 1, 1,  ..., 1, 1, 1])
+            batch: Shape [1424]
+                tensor([ 0,  0,  0,  ..., 63, 63, 63])
+            num_nodes_per_graph: Shape [64]
+                tensor([ 0,  0,  0,  ..., 63, 63, 63])
+            num_graphs: (int) 64
+                tensor([23, 23, 18, 22, 20, 21, 27, 20, 27, 20, 22, 23, 23, 25, 20, 19, 27, 27,
+                        23, 22, 20, 25, 21, 27, 27, 23, 19, 22, 20, 23, 21, 23, 24, 23, 23, 18,
+                        25, 21, 25, 23, 19, 23, 18, 21, 18, 19, 21, 23, 22, 18, 21, 23, 25, 19,
+                        23, 23, 20, 22, 22, 23, 25, 23, 23, 25])
+            is_sidechain: None
+        '''
         N = atom_type.size(0)
         node2graph = batch
 
         # Four elements for DDPM: original_data(pos), gaussian_noise(pos_noise), beta(sigma), time_step
         # Sample noise levels
+        '''
+        Each graph has a corresponding timestep and alpha.
+        '''
         time_step = torch.randint(
             0, self.num_timesteps, size=(num_graphs//2+1, ), device=pos.device)
         time_step = torch.cat(
@@ -266,6 +297,14 @@ class DualEncoderEpsNetwork(nn.Module):
         pos_perturbed = pos + pos_noise * (1.0 - a_pos).sqrt() / a_pos.sqrt()
 
         # Update invariant edge features, as shown in equation 5-7
+        '''
+        edge_inv_global
+        edge_inv_local
+        edge_index
+        edge_type
+        edge_length: edge length based on perturbed position
+        local_edge_mask:
+        '''
         edge_inv_global, edge_inv_local, edge_index, edge_type, edge_length, local_edge_mask = self(
             atom_type = atom_type,
             pos = pos_perturbed,
@@ -280,22 +319,78 @@ class DualEncoderEpsNetwork(nn.Module):
         )   # (E_global, 1), (E_local, 1)
 
         edge2graph = node2graph.index_select(0, edge_index[0])
-        # Compute sigmas_edge
-        a_edge = a.index_select(0, edge2graph).unsqueeze(-1)  # (E, 1)
+        '''
+        edge_index: Shape [2, 27332] (2, E)
+                    tensor([[   0,    0,    0,  ..., 1423, 1423, 1423],
+                            [   1,    2,    3,  ..., 1420, 1421, 1422]])
+        
+        node2graph: node mask
+            Shape [1424] (N)
+            tensor([ 0,  0,  0,  ..., 63, 63, 63])
 
+        edge2graph: edge mask
+            Shape [27332] (E)
+            tensor([ 0,  0,  0,  ..., 63, 63, 63])
+        '''
+        # Compute sigmas_edge
+        r'''
+        a: (\overbar \alpha) for each graph
+            Shape: [64] (G)
+        a_edge: alphas for each edge, edges in the same graph have the same alpha
+            Shape: [27332, 1] (E)
+        '''
+        a_edge = a.index_select(0, edge2graph).unsqueeze(-1)  # (E, 1)
+        
         # Compute original and perturbed distances
+        '''
+        d_gt: Original (ground truth) length of edges
+            Shape: [27332, 1] (E, 1)
+        '''
         d_gt = get_distance(pos, edge_index).unsqueeze(-1)   # (E, 1)
         d_perturbed = edge_length
-        # Filtering for protein
-        train_edge_mask = is_train_edge(edge_index, is_sidechain)
-        d_perturbed = torch.where(train_edge_mask.unsqueeze(-1), d_perturbed, d_gt)
 
+        # Filtering for protein
+        '''
+        train_edge_mask:
+            Shape: [27332] (E)
+        d_perturbed: Perturbed distance of edges based on perturbed positions
+            Shape: [27332, 1] (E, 1)
+        d_target: (d_gt-d_perturbed)*sqrt(alpha)/sqrt(1-alpha)
+            Shape: [27332, 1] (E, 1)
+        global_mask:
+            Shape: [27332, 1] (E, 1)
+        target_d_global:
+            Shape: [27332, 1] (E, 1)
+        edge_inv_global:
+            Shape: [27332, 1] (E, 1)
+        target_pos_global:
+            Shape: [1424, 3] (N, 3)
+        node_eq_global:
+            Shape: [1424, 3] (N, 3)
+        loss_global:
+            Shape: [1424, 1] (N, 1)
+        target_pos_local:
+            Shape: [1424, 3] (N, 3)
+        node_eq_local:
+            Shape: [1424, 3] (N, 3)
+        loss_local:
+            Shape: [1424, 1] (N, 1)
+        '''
+        train_edge_mask = is_train_edge(edge_index, is_sidechain) # [E]
+        d_perturbed = torch.where(train_edge_mask.unsqueeze(-1), d_perturbed, d_gt)
         if self.config.edge_encoder == 'gaussian':
             # Distances must be greater than 0 
             d_sgn = torch.sign(d_perturbed)
             d_perturbed = torch.clamp(d_perturbed * d_sgn, min=0.01, max=float('inf'))
+        '''
+        Not trained edges in (d_target) have value 0
+        '''
         d_target = (d_gt - d_perturbed) / (1.0 - a_edge).sqrt() * a_edge.sqrt()  # (E_global, 1), denoising direction
-
+        '''
+        local_edge_mask: Mask edges with type > 0
+        global_mask: Universal - Local_edge - Perturbed_edge
+            (not pertured or local_edge) and (not local_edge) <==> ((not perturbed) and (not local_edge))
+        '''
         global_mask = torch.logical_and(
                             torch.logical_or(d_perturbed <= self.config.cutoff, local_edge_mask.unsqueeze(-1)),
                             ~local_edge_mask.unsqueeze(-1)
@@ -306,12 +401,11 @@ class DualEncoderEpsNetwork(nn.Module):
         node_eq_global = eq_transform(edge_inv_global, pos_perturbed, edge_index, edge_length)
         loss_global = (node_eq_global - target_pos_global)**2
         loss_global = 2 * torch.sum(loss_global, dim=-1, keepdim=True)
-
         target_pos_local = eq_transform(d_target[local_edge_mask], pos_perturbed, edge_index[:, local_edge_mask], edge_length[local_edge_mask])
         node_eq_local = eq_transform(edge_inv_local, pos_perturbed, edge_index[:, local_edge_mask], edge_length[local_edge_mask])
         loss_local = (node_eq_local - target_pos_local)**2
         loss_local = 5 * torch.sum(loss_local, dim=-1, keepdim=True)
-
+        
         # loss for atomic eps regression
         loss = loss_global + loss_local
         # loss_pos = scatter_add(loss_pos.squeeze(), node2graph)  # (G, 1)
@@ -617,6 +711,8 @@ def is_radius_edge(edge_type):
 
 
 def is_local_edge(edge_type):
+    # rdkit.Chem.rdchem.BondType.UNSPECIFIED = 0
+    # not unspecified bond type
     return edge_type > 0
 
 

@@ -1,16 +1,47 @@
 import torch
 from torch_scatter import scatter_add
-
+from visualize_mat import *
 
 def get_distance(pos, edge_index):
     return (pos[edge_index[0]] - pos[edge_index[1]]).norm(dim=-1)
 
 
 def eq_transform(score_d, pos, edge_index, edge_length):
+    '''
+    score_d: Shape [27332, 1]
+        tensor([[0.],
+                [0.],
+                [0.],
+                ...,
+                [0.],
+                [0.],
+                [0.]])
+    pos: Shape [1424, 3]
+        tensor([[ -2.7890,  -1.3669,  -0.3078],
+                [ -2.9441,   0.4065,  -0.6180],
+                [ -1.3277,  -0.7638,  -1.4830],
+                ...,
+                [  3.4151,  16.8883, -12.5260],
+                [  6.5336,  -8.5285,   5.9441],
+                [  3.5570, -11.9453,  -6.6222]])
+    edge_index: Shape [2, 27332]
+        tensor([[   0,    0,    0,  ..., 1423, 1423, 1423],
+                [   1,    2,    3,  ..., 1420, 1421, 1422]])
+    edge_length: Shape [27332, 1]
+        tensor([[ 1.8070],
+                [ 1.9698],
+                [ 0.7943],
+                ...,
+                [30.2063],
+                [29.4321],
+                [13.3583]])
+    '''
     N = pos.size(0)
     dd_dr = (1. / edge_length) * (pos[edge_index[0]] - pos[edge_index[1]])   # (E, 3)
+    # save_mat_plt(dd_dr, 'visualize/dd_dr.png')
     score_pos = scatter_add(dd_dr * score_d, edge_index[0], dim=0, dim_size=N) \
         + scatter_add(- dd_dr * score_d, edge_index[1], dim=0, dim_size=N) # (N, 3)
+    # save_heatmap_sns(dd_dr, 'visualize/score_pos.png')
     return score_pos
 
 

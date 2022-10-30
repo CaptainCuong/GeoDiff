@@ -89,6 +89,7 @@ class CFConv(MessagePassing):
             C = C * (edge_length <= self.cutoff) * (edge_length >= 0.0)     # Modification: cutoff
         else:
             C = (edge_length <= self.cutoff).float()
+            
         W = self.nn(edge_attr) * C.view(-1, 1)
 
         x = self.lin1(x)
