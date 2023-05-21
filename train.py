@@ -9,17 +9,17 @@ import torch
 import torch.utils.tensorboard
 from torch.nn.utils import clip_grad_norm_
 from torch_geometric.data import DataLoader
-
+from torch import nn
 from models.epsnet import get_model
 from utils.datasets import ConformationDataset
 from utils.transforms import *
 from utils.misc import *
 from utils.common import get_optimizer, get_scheduler
 
-
+torch.autograd.set_detect_anomaly(True)
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('config', type=str)
+    parser.add_argument('--config', default='./configs/qm9_default.yml', type=str)
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--resume_iter', type=int, default=None)
     parser.add_argument('--logdir', type=str, default='./logs')
@@ -36,6 +36,7 @@ if __name__ == '__main__':
     with open(config_path, 'r') as f:
         config = EasyDict(yaml.safe_load(f))
     config_name = os.path.basename(config_path)[:os.path.basename(config_path).rfind('.')]
+    # config_name: qm9_default
     seed_all(config.train.seed)
 
     
@@ -49,11 +50,13 @@ if __name__ == '__main__':
     ckpt_dir = os.path.join(log_dir, 'checkpoints')
     os.makedirs(ckpt_dir, exist_ok=True)
     logger = get_logger('train', log_dir)
+    print(log_dir)
+    # raise
     writer = torch.utils.tensorboard.SummaryWriter(log_dir)
     logger.info(args)
     logger.info(config)
     shutil.copyfile(config_path, os.path.join(log_dir, os.path.basename(config_path)))
-
+    
     # Datasets and loaders
     logger.info('Loading datasets...')
     transforms = CountNodesPerGraph()
@@ -61,16 +64,13 @@ if __name__ == '__main__':
     val_set = ConformationDataset(config.dataset.val, transform=transforms)
     train_iterator = inf_iterator(DataLoader(train_set, config.train.batch_size, shuffle=True))
     val_loader = DataLoader(val_set, config.train.batch_size, shuffle=False)
-
     # Model
     logger.info('Building model...')
-    model = get_model(config.model).to(args.device)
+    model = get_model(config.model).to(args.device) # (models.epsnet.__init__ import get_model), DualEncoderEpsNetwork
 
     # Optimizer
-    optimizer_global = get_optimizer(config.train.optimizer, model.model_global)
-    optimizer_local = get_optimizer(config.train.optimizer, model.model_local)
-    scheduler_global = get_scheduler(config.train.scheduler, optimizer_global)
-    scheduler_local = get_scheduler(config.train.scheduler, optimizer_local)
+    optimizer = get_optimizer(config.train.optimizer, nn.ModuleList([model.model_global, model.model_local]))
+    scheduler = get_scheduler(config.train.scheduler, optimizer)
     start_iter = 1
 
     # Resume from checkpoint
@@ -80,16 +80,14 @@ if __name__ == '__main__':
         logger.info('Iteration: %d' % start_iter)
         ckpt = torch.load(ckpt_path)
         model.load_state_dict(ckpt['model'])
-        optimizer_global.load_state_dict(ckpt['optimizer_global'])
-        optimizer_local.load_state_dict(ckpt['optimizer_local'])
-        scheduler_global.load_state_dict(ckpt['scheduler_global'])
-        scheduler_local.load_state_dict(ckpt['scheduler_local'])
+        optimizer.load_state_dict(ckpt['optimizer'])
+        scheduler.load_state_dict(ckpt['scheduler'])
 
     def train(it):
         model.train()
-        optimizer_global.zero_grad()
-        optimizer_local.zero_grad()
-        batch = next(train_iterator).to(args.device)
+        optimizer.zero_grad()
+        batch = next(train_iterator).to(args.device) # torch_geometric.data.batch.DataBatch
+        # type: torch_geometric.data.batch.DataBatch
         loss, loss_global, loss_local = model.get_loss(
             atom_type=batch.atom_type,
             pos=batch.pos,
@@ -104,17 +102,15 @@ if __name__ == '__main__':
         loss = loss.mean()
         loss.backward()
         orig_grad_norm = clip_grad_norm_(model.parameters(), config.train.max_grad_norm)
-        optimizer_global.step()
-        optimizer_local.step()
+        optimizer.step()
 
-        logger.info('[Train] Iter %05d | Loss %.2f | Loss(Global) %.2f | Loss(Local) %.2f | Grad %.2f | LR(Global) %.6f | LR(Local) %.6f' % (
-            it, loss.item(), loss_global.mean().item(), loss_local.mean().item(), orig_grad_norm, optimizer_global.param_groups[0]['lr'], optimizer_local.param_groups[0]['lr'],
+        logger.info('[Train] Iter %05d | Loss %.2f | Loss(Global) %.2f | Loss(Local) %.2f | Grad %.2f | LR%.6f' % (
+            it, loss.item(), loss_global.mean().item(), loss_local.mean().item(), orig_grad_norm, optimizer.param_groups[0]['lr']
         ))
         writer.add_scalar('train/loss', loss, it)
         writer.add_scalar('train/loss_global', loss_global.mean(), it)
         writer.add_scalar('train/loss_local', loss_local.mean(), it)
-        writer.add_scalar('train/lr_global', optimizer_global.param_groups[0]['lr'], it)
-        writer.add_scalar('train/lr_local', optimizer_local.param_groups[0]['lr'], it)
+        writer.add_scalar('train/lr_global', optimizer.param_groups[0]['lr'], it)
         writer.add_scalar('train/grad_norm', orig_grad_norm, it)
         writer.flush()
 
@@ -148,11 +144,9 @@ if __name__ == '__main__':
         avg_loss_local = sum_loss_local / sum_n_local
         
         if config.train.scheduler.type == 'plateau':
-            scheduler_global.step(avg_loss_global)
-            scheduler_local.step(avg_loss_local)
+            scheduler.step(avg_loss_global)
         else:
-            scheduler_global.step()
-            scheduler_local.step()
+            scheduler.step()
 
         logger.info('[Validate] Iter %05d | Loss %.6f | Loss(Global) %.6f | Loss(Local) %.6f' % (
             it, avg_loss, avg_loss_global, avg_loss_local,
@@ -172,10 +166,8 @@ if __name__ == '__main__':
                 torch.save({
                     'config': config,
                     'model': model.state_dict(),
-                    'optimizer_global': optimizer_global.state_dict(),
-                    'scheduler_global': scheduler_global.state_dict(),
-                    'optimizer_local': optimizer_local.state_dict(),
-                    'scheduler_local': scheduler_local.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'scheduler': scheduler.state_dict(),
                     'iteration': it,
                     'avg_val_loss': avg_val_loss,
                 }, ckpt_path)

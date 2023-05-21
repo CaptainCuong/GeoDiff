@@ -23,7 +23,7 @@ class GINEConv(MessagePassing):
         if isinstance(activation, str):
             self.activation = getattr(F, activation)
         else:
-            self.activation = None       
+            self.activation = None      
 
         if train_eps:
             self.eps = torch.nn.Parameter(torch.Tensor([eps]))
@@ -103,8 +103,8 @@ class GINEncoder(torch.nn.Module):
 
         for conv_idx, conv in enumerate(self.convs):
             hidden = conv(conv_input, edge_index, edge_attr)
-            if conv_idx < len(self.convs) - 1 and self.activation is not None:
-                hidden = self.activation(hidden)
+            # if conv_idx < len(self.convs) - 1 and self.activation is not None:
+            #     hidden = self.activation(hidden)
             assert hidden.shape == conv_input.shape                
             if self.short_cut and hidden.shape == conv_input.shape:
                 hidden += conv_input

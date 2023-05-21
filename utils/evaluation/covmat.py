@@ -86,13 +86,19 @@ class CovMatEvaluator(object):
         self.print_fn = print_fn
 
     def __call__(self, packed_data_list, start_idx=0):
+        '''
+        packed_data_list: List(Data)
+        e.g. [Data(edge_index=[2, 156], pos=[18, 3], atom_type=[18], edge_type=[156], 
+                rdmol=<rdkit.Chem.rdchem.Mol object at 0x000002213C5F9080>, smiles='CCOCCC(=O)C#N', 
+                idx=[1], pos_ref=[954, 3], num_pos_ref=[1], num_nodes_per_graph=[1], bond_edge_index=[2, 34], 
+                edge_order=[156], is_bond=[156], pos_gen=[1908, 3]),...]
+        '''
         func = partial(get_rmsd_confusion_matrix, useFF=self.use_force_field)
         
         filtered_data_list = []
-        for data in packed_data_list:
+        for i, data in enumerate(packed_data_list):
             if 'pos_gen' not in data or 'pos_ref' not in data: continue
             if self.filter_disconnected and ('.' in data['smiles']): continue
-            
             data['pos_ref'] = data['pos_ref'].reshape(-1, data['rdmol'].GetNumAtoms(), 3)
             data['pos_gen'] = data['pos_gen'].reshape(-1, data['rdmol'].GetNumAtoms(), 3)
 

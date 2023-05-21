@@ -1,5 +1,5 @@
 model:
-  type: diffusion # dsm and diffusion
+  type: dsm # dsm and diffusion
   network: dualenc
   hidden_dim: 128
   num_convs: 6
@@ -13,6 +13,9 @@ model:
   edge_order: 3
   edge_encoder: mlp
   smooth_conv: false
+  sigma_begin: 0.001
+  sigma_end: 2.718
+  num_noise_level: 100
 
 train:
   seed: 2021
@@ -33,6 +36,6 @@ train:
     patience: 10
 
 dataset:
-  train: ./data/GEOM/QM9/train_data_40k.pkl
-  val: ./data/GEOM/QM9/val_data_5k.pkl
-  test: ./data/GEOM/QM9/test_data_1k.pkl
+  train: ./data/GEOM/QM9/train_data_33k.pkl
+  val: ./data/GEOM/QM9/val_data_4k.pkl
+  test: ./data/GEOM/QM9/test_data_200.pkl

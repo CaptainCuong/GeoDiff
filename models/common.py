@@ -8,7 +8,7 @@ from torch_sparse import coalesce
 from torch_geometric.utils import to_dense_adj, dense_to_sparse
 
 from utils.chem import BOND_TYPES
-
+from visualize_mat import *
 
 class MeanReadout(nn.Module):
     """Mean readout operator over graphs with variadic sizes."""
@@ -140,16 +140,21 @@ def _extend_graph_order(num_nodes, edge_index, edge_type, order=3):
             Following attributes will be added to the data object:
               - bond_edge_index:  Original edge_index.
         """
+        # save_mat_plt(adj[:100,:100], 'visualize/adj.png')
         adj_mats = [torch.eye(adj.size(0), dtype=torch.long, device=adj.device), \
-                    binarize(adj + torch.eye(adj.size(0), dtype=torch.long, device=adj.device))]
-
+                    binarize(adj + torch.eye(adj.size(0), dtype=torch.long, device=adj.device))]  
         for i in range(2, order+1):
             adj_mats.append(binarize(adj_mats[i-1] @ adj_mats[1]))
         order_mat = torch.zeros_like(adj)
-
+        
+        # for i in range(len(adj_mats)):
+        #     save_mat_plt(adj_mats[i][:100,:100], f'visualize/adj_mats_{i}.png')
+        
         for i in range(1, order+1):
+            # save_mat_plt((adj_mats[i] - adj_mats[i-1]) * i, f'visualize/order_mat{i}.png')
             order_mat += (adj_mats[i] - adj_mats[i-1]) * i
 
+        # save_mat_plt(order_mat[:100,:100], f'visualize/order_mat.png')
         return order_mat
 
     num_types = len(BOND_TYPES)

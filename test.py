@@ -11,7 +11,8 @@ from models.epsnet import *
 from utils.datasets import *
 from utils.transforms import *
 from utils.misc import *
-
+import numpy as np
+from torch import nn
 
 def num_confs(num:str):
     if num.endswith('x'):
@@ -24,19 +25,19 @@ def num_confs(num:str):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('ckpt', type=str, help='path for loading the checkpoint')
-    parser.add_argument('--save_traj', action='store_true', default=False,
+    parser.add_argument('--ckpt', type=str, default=r'logs/qm9_default_2023_03_15__16_05_50/checkpoints/75000.pt', help='path for loading the checkpoint')
+    parser.add_argument('--save_traj', action='store_true', default=True,
                     help='whether store the whole trajectory for sampling')
     parser.add_argument('--resume', type=str, default=None)
     parser.add_argument('--tag', type=str, default='')
     parser.add_argument('--num_confs', type=num_confs, default=num_confs('2x'))
     parser.add_argument('--test_set', type=str, default=None)
-    parser.add_argument('--start_idx', type=int, default=800)
-    parser.add_argument('--end_idx', type=int, default=1000)
+    parser.add_argument('--start_idx', type=int, default=0)
+    parser.add_argument('--end_idx', type=int, default=5)
     parser.add_argument('--out_dir', type=str, default=None)
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--clip', type=float, default=1000.0)
-    parser.add_argument('--n_steps', type=int, default=5000,
+    parser.add_argument('--n_steps', type=int, default=100,
                     help='sampling num steps; for DSM framework, this means num steps for each noise scale')
     parser.add_argument('--global_start_sigma', type=float, default=0.5,
                     help='enable global gradients only when noise is low')
@@ -45,7 +46,7 @@ if __name__ == '__main__':
     # Parameters for DDPM
     parser.add_argument('--sampling_type', type=str, default='ld',
                     help='generalized, ddpm_noisy, ld: sampling method for DDIM, DDPM or Langevin Dynamics')
-    parser.add_argument('--eta', type=float, default=1.0,
+    parser.add_argument('--eta', type=float, default=0.0,
                     help='weight for DDIM and DDPM: 0->DDIM, 1->DDPM')
     args = parser.parse_args()
 
@@ -76,7 +77,12 @@ if __name__ == '__main__':
     # Model
     logger.info('Loading model...')
     model = get_model(ckpt['config'].model).to(args.device)
+    sigmas = torch.tensor(
+                np.exp(np.linspace(np.log(0.001), np.log(2.718),
+                                100)), dtype=torch.float32).to(args.device)
     model.load_state_dict(ckpt['model'])
+    model.sigmas = nn.Parameter(sigmas, requires_grad=False)
+    model.num_timesteps = model.sigmas.size(0)
 
     test_set_selected = []
     for i, data in enumerate(test_set):
@@ -90,7 +96,7 @@ if __name__ == '__main__':
             results = pickle.load(f)
         for data in results:
             done_smiles.add(data.smiles)
-    
+
     for i, data in enumerate(tqdm(test_set_selected)):
         if data.smiles in done_smiles:
             logger.info('Molecule#%d is already done.' % i)
